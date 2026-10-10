@@ -2,7 +2,7 @@
 # Builds one release target and packs it with the license texts of everything compiled into it.
 #   release/stage.sh linux|windows OUT_DIR
 # Writes OUT_DIR/gtube-vVERSION-x86_64-linux.tar.gz or OUT_DIR/gtube-vVERSION-x86_64-windows.zip,
-# VERSION being build.zig.zon's .version. Run from a clean checkout; zig 0.16 fetches the
+# VERSION being build.zig.zon's .version. Run from a clean checkout; zig 0.17 fetches the
 # dependencies into zig-pkg/, where their license texts are read from.
 set -euo pipefail
 cd "$(dirname "$0")/.."
