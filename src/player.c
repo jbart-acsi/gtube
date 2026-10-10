@@ -97,7 +97,7 @@ static char *collect(player *p, const char *const *args, const char *cookies, ch
     }
     data[n] = 0;
     SDL_WaitProcess(proc, true, code);
-    *code = tools_exit_code(proc, *code);
+    *code = gs_http_exit_code(proc, *code);
     tools_errors(proc, errors, esize, used);
     SDL_DestroyProcess(proc);
     return data;

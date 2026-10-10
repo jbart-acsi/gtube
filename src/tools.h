@@ -17,9 +17,10 @@ typedef struct {
     SDL_AtomicInt state;  // 0 working, 1 ready, -1 failed (status says why)
 } tools;
 
-// Every program the app starts goes through here. On Windows a child inherits every inheritable
-// handle open at that moment, including another thread's half-made pipes, which then never report
-// end of output; starting one process at a time closes that window.
+// Every program the app starts goes through here (gs_http_spawn): one at a time, since on Windows a
+// child inherits every inheritable handle open at that moment, including another thread's half-made
+// pipes; and on Windows without a console window, ended with the app. Read a finished one's exit
+// code with gs_http_exit_code, since SDL reports 0 for it there.
 SDL_Process *tools_spawn(SDL_PropertiesID props);
 // A system program such as curl by full path, so the user's PATH is never searched for it.
 void tools_program(const char *name, char *out, size_t size);
@@ -29,9 +30,6 @@ void tools_prepare(void *t);  // blocking; a gs_job_fn
 // Starts yt-dlp with `args` (NULL-terminated, without the program), signed in with a Netscape
 // `cookies` file if not NULL. Its output and error output are piped to the caller.
 SDL_Process *tools_ytdlp(tools *t, const char *const *args, const char *cookies);
-// The exit code of a finished process started here, given the one SDL reported (which on Windows
-// is always 0: the processes run in the background, without console windows).
-int tools_exit_code(SDL_Process *proc, int code);
 // Appends what yt-dlp has written to its error output so far to out[used..], which stays a string
 // (the rest is drained and dropped when full, so the pipe never blocks yt-dlp). Returns the new length.
 size_t tools_errors(SDL_Process *proc, char *out, size_t size, size_t used);
