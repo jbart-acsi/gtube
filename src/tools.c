@@ -323,6 +323,14 @@ void tools_prepare(void *arg) {
     char bin[1100], stamp[1200], have[65] = "", exe[1400];
     snprintf(bin, sizeof bin, "%sbin", t->dir);
     SDL_CreateDirectory(bin);
+    snprintf(stamp, sizeof stamp, "%s" SLASH "write-test", bin);  // every later step writes here
+    if (!SDL_SaveFile(stamp, "", 0)) {
+        char msg[sizeof t->status];
+        snprintf(msg, sizeof msg, "cannot write to %s (try --data DIR)", bin);
+        fail(t, msg);
+        return;
+    }
+    SDL_RemovePath(stamp);
     snprintf(stamp, sizeof stamp, "%s" SLASH "yt-dlp.txt", bin);
     char *text = SDL_LoadFile(stamp, NULL);
     double checked = text ? SDL_atof(text) : 0;
