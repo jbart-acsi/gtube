@@ -84,7 +84,7 @@ typedef struct {
     double quit_at;          // --quit: seconds to run (0 for ever)
     uint64_t stats_next;
     uint64_t started;
-    float volume;
+    float volume, saved_volume;  // 0 to 1.5, and as volume.txt in the data folder last held it
     SDL_FRect volume_bar;  // the clickable track in the now-playing header
     bool volume_drag;
     SDL_FRect rows[64];
@@ -208,6 +208,25 @@ static void save_window(app *a) {
     gs_window_state ws = a->window;
     ws.fullscreen = false;
     gs_window_state_save(path, &ws);
+}
+
+// The volume between runs, in volume.txt in the data folder.
+static void volume_path(const app *a, char *out, size_t size) { snprintf(out, size, "%svolume.txt", a->dir); }
+
+static void load_volume(app *a) {
+    char path[1200];
+    volume_path(a, path, sizeof path);
+    char *text = SDL_LoadFile(path, NULL);
+    if (text) a->volume = a->saved_volume = fminf(1.5f, fmaxf(0, (float)SDL_atof(text)));
+    SDL_free(text);
+    gs_mix_set_volume(a->volume);
+}
+
+static void save_volume(app *a) {
+    char path[1200], text[16];
+    volume_path(a, path, sizeof path);
+    snprintf(text, sizeof text, "%.2f\n", a->volume);
+    if (SDL_SaveFile(path, text, strlen(text))) a->saved_volume = a->volume;
 }
 
 // Shows the window where it was last time, maximised or full screen as it was.
@@ -382,7 +401,8 @@ SDL_AppResult SDL_AppInit(void **state, int argc, char **argv) {
     for (int i = 1; i < effect; i++) viz_step(a->viz, 1);
     a->audio = !a->shot && gs_mix_open(RATE);
     a->started = SDL_GetTicks();
-    a->volume = 1;
+    a->volume = a->saved_volume = 1;
+    if (a->persist) load_volume(a);
     a->player = player_new(&a->tools, &a->account, a->jobs, a->audio);
     a->glyphs = gs_glyphs_new(a->ren, 1024);
     a->fonts = gs_fontset_system();
@@ -926,6 +946,7 @@ SDL_AppResult SDL_AppIterate(void *state) {
         if (a->window_changed) save_window(a), a->window_changed = false;
         int v = player_version(a->player);
         if (v != a->saved_version) save_queue(a), a->saved_version = v;
+        if (a->volume != a->saved_volume) save_volume(a);
     }
     library *l = &a->library;
     SDL_LockMutex(l->lock);
@@ -1136,6 +1157,7 @@ void SDL_AppQuit(void *state, SDL_AppResult result) {
     if (!a) return;
     if (a->persist && a->win) save_window(a);
     if (a->persist && a->player) save_queue(a);
+    if (a->persist && a->volume != a->saved_volume) save_volume(a);
     gs_mix_close();
     signin_close(a->signin);
     player_free(a->player);
