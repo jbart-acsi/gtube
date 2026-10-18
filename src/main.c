@@ -789,7 +789,7 @@ SDL_AppResult SDL_AppEvent(void *state, SDL_Event *e) {
         }
     } else if (e->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
         float x = e->button.x, y = e->button.y;
-        if (inside(a->volume_bar, x, y)) {
+        if (e->button.button == SDL_BUTTON_LEFT && inside(a->volume_bar, x, y)) {
             a->volume_drag = true;
             volume_from_x(a, x);
             return SDL_APP_CONTINUE;
@@ -803,7 +803,7 @@ SDL_AppResult SDL_AppEvent(void *state, SDL_Event *e) {
         else if (a->view == V_OPEN && inside(a->header, x, y)) show(a, a->back);
         for (int i = 0; i < a->nrows; i++)
             if (inside(a->rows[i], x, y)) *sel = a->row_index[i], activate(a, a->row_index[i]);
-    } else if (e->type == SDL_EVENT_MOUSE_BUTTON_UP) {
+    } else if (e->type == SDL_EVENT_MOUSE_BUTTON_UP && e->button.button == SDL_BUTTON_LEFT) {
         a->volume_drag = false;
     } else if (e->type == SDL_EVENT_MOUSE_MOTION && a->volume_drag) {
         volume_from_x(a, e->motion.x);
