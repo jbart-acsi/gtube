@@ -180,12 +180,28 @@ static SDL_Window *new_window(app *a, SDL_WindowFlags flags) {
     return w;
 }
 
+// The window icon. On Windows SDL takes it from the executable's icon resource (assets/icon/gtube.rc);
+// elsewhere it is the PNG that assets/icon/update.sh makes.
+#ifndef _WIN32
+#include "gtube-icon.h"
+#endif
+
+static void set_icon(SDL_Window *w) {
+#ifndef _WIN32
+    SDL_Surface *icon = SDL_LoadPNG_IO(SDL_IOFromConstMem(icon_png, sizeof icon_png), true);
+    if (icon) SDL_SetWindowIcon(w, icon), SDL_DestroySurface(icon);
+#else
+    (void)w;
+#endif
+}
+
 static bool make_window(app *a, bool bend) {
     SDL_WindowFlags wf = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN;
     if (!(bend && bend_vk_window("gtube", a->window.w, a->window.h, wf, &a->win, &a->ren))) {
         if (!(a->win = new_window(a, wf))) return false;
         if (!(a->ren = SDL_CreateRenderer(a->win, NULL))) return SDL_DestroyWindow(a->win), a->win = NULL, false;
     }
+    set_icon(a->win);
     bend_vk_hold();  // the player's drawing shares Bend's queue: held but while waiting (see bend_vulkan.h)
     a->pace_cap = -1;  // paced for this renderer from the next frame
     return true;
@@ -266,6 +282,8 @@ static const char usage[] =
 SDL_AppResult SDL_AppInit(void **state, int argc, char **argv) {
     app *a = SDL_calloc(1, sizeof *a);
     *state = a;
+    SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON, "1");  // the icon resource in assets/icon/gtube.rc
+    SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON_SMALL, "1");
     const char *data = NULL, *probe = NULL, *wav = NULL, *import = NULL, *api_kind = NULL, *api_arg = NULL, *radio = NULL, *urls[16];
     int nurls = 0, effect = 1;
     double seconds = 30;
