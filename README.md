@@ -137,10 +137,6 @@ The Bend effects draw every pixel on a thread of their own. With a Vulkan GPU th
 
 Titles render in Latin, Cyrillic, Japanese, Chinese, Korean, Devanagari and Arabic with the system fonts, but Arabic has no joining or right-to-left order yet. A track gtube expects to play starts in about 0.1 s, from a stream address it fetched ahead: the next one in the queue, the one restored at launch, a song left selected for a few seconds, and the first two songs of the list on screen. Any other track takes about 4 s, most of it yt-dlp's extraction. Not built yet: lyrics, cover art, seeking and editing playlists.
 
-## Test builds
-
-Friends testing gtube with me run a test build instead of a release: the archive at `http://136.243.110.49:8073/gtube-windows.zip`, unpacked anywhere. It checks every minute for a newer test build, downloads it, checks it against my signature, and once nothing has played for a minute starts it in place of the running one, with the queue as it was. Each one is a commit, so a test build can be broken in ways a release is not. Releases never update themselves.
-
 ## Development
 
 To work on gesso alongside gtube, build against a local checkout with `zig build --fork=../gesso`. `build.zig.zon` pins a gesso commit; `zig fetch --save=gesso git+https://github.com/wakamex/gesso#main` moves it to the latest.
