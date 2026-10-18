@@ -25,6 +25,9 @@ pub fn build(b: *std.Build) void {
     const bend_c = if (target.result.os.tag == .macos) "src/bend/viz_bend_macos.c" else "src/bend/viz_bend.c";
     mod.addCSourceFile(.{ .file = b.path(bend_c), .flags = &.{ "-std=c11", "-O3", "-w", "-DBEND_VULKAN=1", "-DBENDVIZ_EMBED", "-Dmain=bendviz_main" } });
     mod.linkLibrary(gesso);
+    // The build's name, given by tools/publish-update; a build without one never updates itself.
+    if (b.option([]const u8, "build", "Name this a published build, which keeps itself up to date (tools/publish-update)")) |name|
+        mod.addCMacro("GTUBE_BUILD", b.fmt("\"{s}\"", .{name}));
     const exe = b.addExecutable(.{ .name = "gtube", .root_module = mod });
     b.getInstallStep().dependOn(&b.addInstallBinFile(b.path("src/bend/viz.gpu"), if (target.result.os.tag == .windows) "gtube.exe.gpu" else "gtube.gpu").step);
     if (target.result.os.tag == .macos) {  // the sign-in window: WebKit in AppKit
