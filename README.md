@@ -56,7 +56,7 @@ Signed out, search, links and radio work. Your liked music, your playlists and l
 
 ## Sign-in
 
-Press s. It opens Google's sign-in page in a small window: [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) on Windows, WebKitGTK on Linux. Once it reaches YouTube signed in, gtube keeps only the YouTube and Google cookies, and renews the session over plain HTTPS at launch and every 10 minutes. On Windows the cookies are saved encrypted for your Windows user with the Windows Data Protection API (DPAPI); on Linux, in a file in the data folder that only your user can read.
+Press s. It opens Google's sign-in page in a small window: [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) on Windows, WebKitGTK on Linux. Once it reaches YouTube signed in, gtube keeps only the YouTube and Google cookies, and renews the session over plain HTTPS at launch and every 10 minutes. On Windows the cookies are saved encrypted for your Windows user with the Windows Data Protection API (DPAPI); on Linux, in the desktop's keyring through the [Secret Service](https://specifications.freedesktop.org/secret-service/) (the first save may ask to unlock or create one), or, without a keyring, in a file in the data folder that only your user can read. A session saved in that file by an earlier gtube moves into the keyring the next time it is renewed.
 
 The Linux window needs WebKitGTK 2.42 or newer, for GTK 3 or GTK 4: `webkit2gtk4.1` or `webkitgtk6.0` on Fedora, `libwebkit2gtk-4.1-0` or `libwebkitgtk-6.0-4` on Debian and Ubuntu, `webkit2gtk-4.1` or `webkitgtk-6.0` on Arch. GNOME desktops already have the GTK 4 one. Without either, import a browser's cookies instead. Sign in to music.youtube.com in a browser, export its cookies in Netscape cookies.txt format with an extension such as [Get cookies.txt LOCALLY](https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) for Chrome or [cookies.txt](https://addons.mozilla.org/en-US/firefox/addon/cookies-txt/) for Firefox (the ones [yt-dlp suggests](https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp)), and run:
 
@@ -136,6 +136,10 @@ The Bend effects draw every pixel on a thread of their own. With a Vulkan GPU th
 ## Limits
 
 Titles render in Latin, Cyrillic, Japanese, Chinese, Korean, Devanagari and Arabic with the system fonts, but Arabic has no joining or right-to-left order yet. A track gtube expects to play starts in about 0.1 s, from a stream address it fetched ahead: the next one in the queue, the one restored at launch, a song left selected for a few seconds, and the first two songs of the list on screen. Any other track takes about 4 s, most of it yt-dlp's extraction. Not built yet: lyrics, cover art, seeking and editing playlists.
+
+## Test builds
+
+Friends testing gtube with me run a test build instead of a release: the archive at `http://136.243.110.49:8073/gtube-windows.zip`, unpacked anywhere. It checks every minute for a newer test build, downloads it, checks it against my signature, and once nothing has played for a minute starts it in place of the running one, with the queue as it was. Each one is a commit, so a test build can be broken in ways a release is not. Releases never update themselves.
 
 ## Development
 
