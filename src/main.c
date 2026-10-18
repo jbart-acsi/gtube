@@ -288,7 +288,7 @@ static const char usage[] =
 // A build published by tools/publish-update keeps itself up to date from the server below, where
 // each commit published goes; a release or one's own build (no -Dbuild name) never looks. It starts
 // the new build once nothing has played for a minute, so that no song is cut off.
-#define UPDATE_SERVER "http://136.243.110.49:8073/manifest.txt"
+#define UPDATE_SERVER "http://updates.waka.mx/gtube/manifest.txt"
 #ifdef _WIN32
 #define PROGRAM "gtube.exe"
 #else
