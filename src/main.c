@@ -24,6 +24,7 @@
 #include "gs_stats.h"
 #include "gs_text.h"
 #include "gs_ui.h"
+#include "gs_update.h"
 #include "stb_image_write.h"
 #include "account.h"
 #include "api.h"
@@ -94,6 +95,11 @@ typedef struct {
     bool window_changed;
     int saved_version;    // the queue as last saved
     uint64_t next_save;
+    gs_update *update;    // a published build looking for the next one (see start_update)
+    uint64_t idle_since;  // when playback last stopped or paused, for starting a new build then
+    bool restart;         // a new build is in place: start it as this one ends
+    int argc;
+    char **argv;
 } app;
 
 static void sign_in(app *a);
@@ -182,12 +188,28 @@ static SDL_Window *new_window(app *a, SDL_WindowFlags flags) {
     return w;
 }
 
+// The window icon. On Windows SDL takes it from the executable's icon resource (assets/icon/gtube.rc);
+// elsewhere it is the PNG that assets/icon/update.sh makes.
+#ifndef _WIN32
+#include "gtube-icon.h"
+#endif
+
+static void set_icon(SDL_Window *w) {
+#ifndef _WIN32
+    SDL_Surface *icon = SDL_LoadPNG_IO(SDL_IOFromConstMem(icon_png, sizeof icon_png), true);
+    if (icon) SDL_SetWindowIcon(w, icon), SDL_DestroySurface(icon);
+#else
+    (void)w;
+#endif
+}
+
 static bool make_window(app *a, bool bend) {
     SDL_WindowFlags wf = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN;
     if (!(bend && bend_vk_window("gtube", a->window.w, a->window.h, wf, &a->win, &a->ren))) {
         if (!(a->win = new_window(a, wf))) return false;
         if (!(a->ren = SDL_CreateRenderer(a->win, NULL))) return SDL_DestroyWindow(a->win), a->win = NULL, false;
     }
+    set_icon(a->win);
     bend_vk_hold();  // the player's drawing shares Bend's queue: held but while waiting (see bend_vulkan.h)
     a->pace_cap = -1;  // paced for this renderer from the next frame
     return true;
@@ -284,9 +306,61 @@ static const char usage[] =
     "                                            quit after S seconds\n"
     "  --api search|albums|playlists|browse|radio ARG   print one YouTube Music API answer\n";
 
+// A build published by tools/publish-update keeps itself up to date from the server below, where
+// each commit published goes; a release or one's own build (no -Dbuild name) never looks. It starts
+// the new build once nothing has played for a minute, so that no song is cut off.
+#define UPDATE_SERVER "http://136.243.110.49:8073/manifest.txt"
+#ifdef _WIN32
+#define PROGRAM "gtube.exe"
+#else
+#define PROGRAM "gtube"
+#endif
+static const uint8_t update_key[32] = {  // the public half of the key tools/publish-update signs with
+    0xf7, 0x2d, 0x67, 0xfa, 0x95, 0x38, 0x83, 0xb0, 0x67, 0xf0, 0x42, 0x45, 0x44, 0x3d, 0x0c, 0x0a,
+    0x98, 0xa2, 0x92, 0x96, 0x71, 0x3e, 0x93, 0x1d, 0xc4, 0xb5, 0x64, 0xb6, 0x6d, 0x9f, 0xbe, 0x6d,
+};
+
+// Only an ordinary run on its own data looks for updates; GTUBE_UPDATE_FROM names another manifest,
+// for trying it out on any data.
+static void start_update(app *a, const char *data) {
+#ifdef GTUBE_BUILD
+    const char *from = SDL_getenv("GTUBE_UPDATE_FROM");
+    if (data && !(from && *from)) return;
+    gs_update_config c = { .build = GTUBE_BUILD, .manifest = from && *from ? from : UPDATE_SERVER, .key = update_key,
+                           .program = PROGRAM, .agent = "gtube" };
+    a->update = gs_update_start(&c);
+#else
+    (void)a, (void)data;
+#endif
+}
+
+// Whether to end now for the new build: one is in place, and nothing has played for a minute.
+static bool update_due(app *a) {
+    if (!a->update || !gs_update_ready(a->update)) return false;
+    if (player_loading(a->player) || (player_duration(a->player) > 0 && !player_paused(a->player))) return a->idle_since = 0, false;
+    if (!a->idle_since) a->idle_since = SDL_GetTicks();
+    return SDL_GetTicks() - a->idle_since >= 60000;
+}
+
+// Starts the new build with this run's arguments, and --restarted, so its window does not take the
+// keyboard from whatever has it now.
+static void start_new_build(app *a) {
+    char **args = SDL_calloc((size_t)a->argc + 2, sizeof *args);
+    if (!args) return;
+    int n = 0;
+    for (int i = 0; i < a->argc; i++)
+        if (strcmp(a->argv[i], "--restarted")) args[n++] = a->argv[i];
+    args[n++] = "--restarted";
+    if (!gs_update_restart(NULL, PROGRAM, n, args)) SDL_Log("update: could not start the new build: %s", SDL_GetError());
+    SDL_free(args);
+}
+
 SDL_AppResult SDL_AppInit(void **state, int argc, char **argv) {
     app *a = SDL_calloc(1, sizeof *a);
     *state = a;
+    a->argc = argc, a->argv = argv;
+    SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON, "1");  // the icon resource in assets/icon/gtube.rc
+    SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON_SMALL, "1");
     const char *data = NULL, *probe = NULL, *wav = NULL, *import = NULL, *api_kind = NULL, *api_arg = NULL, *radio = NULL, *urls[16];
     int nurls = 0, effect = 1;
     double seconds = 30;
@@ -312,6 +386,7 @@ SDL_AppResult SDL_AppInit(void **state, int argc, char **argv) {
         else if (!strcmp(argv[i], "--refresh")) refresh = true;
         else if (!strcmp(argv[i], "--sign-out")) sign_out = true;
         else if (!strcmp(argv[i], "--sign-in")) open_signin = true;
+        else if (!strcmp(argv[i], "--restarted")) SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
         else if (!strcmp(argv[i], "--view") && i + 1 < argc) {
             int v = SDL_atoi(argv[++i]) - 1;  // (SDL_clamp is a macro that evaluates its argument more than once)
             a->view = SDL_clamp(v, 0, 3), view_given = true;
@@ -418,6 +493,7 @@ SDL_AppResult SDL_AppInit(void **state, int argc, char **argv) {
         a->selected[V_QUEUE] = cur > 0 ? cur : 0;
     }
     a->saved_version = player_version(a->player);
+    if (a->persist) start_update(a, data);
     char first[32];
     if (!view_given && !nurls && !radio && !a->query[0] && !player_track_id(a->player, 0, first, sizeof first))
         a->view = V_LIKED;  // nothing queued: open where a song is one key away
@@ -909,6 +985,7 @@ SDL_AppResult SDL_AppIterate(void *state) {
     viz_set_vsync(a->viz, a->pace.vsync != 0 && !a->pace.vsync_suspect);
     gs_stats_frame_begin(&a->stats);
     if (!a->demo) player_update(a->player);
+    if (update_due(a)) return SDL_Log("update: a new build is in place; starting it"), a->restart = true, SDL_APP_SUCCESS;
     if (a->signin) {  // signing in: done when the page reaches YouTube signed in, or the window is closed
         char *jar = NULL, why[200];
         int r = signin_poll(a->signin, &jar, why, sizeof why);
@@ -1158,6 +1235,8 @@ void SDL_AppQuit(void *state, SDL_AppResult result) {
     if (a->persist && a->win) save_window(a);
     if (a->persist && a->player) save_queue(a);
     if (a->persist && a->volume != a->saved_volume) save_volume(a);
+    gs_update_free(a->update);
+    if (a->restart) start_new_build(a);
     gs_mix_close();
     signin_close(a->signin);
     player_free(a->player);

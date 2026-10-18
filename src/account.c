@@ -32,7 +32,7 @@ static void say(account *a, const char *msg) {
     SDL_Log("account: %s", msg);
 }
 
-// ---- At rest: gs_secret (DPAPI on Windows, an owner-only file elsewhere) ----
+// ---- At rest: gs_secret (DPAPI on Windows, the Keychain or Secret Service elsewhere, else an owner-only file) ----
 
 static bool save_bytes(account *a, const char *text) {
     char dir[1200], path[1200];
