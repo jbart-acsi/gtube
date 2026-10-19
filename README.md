@@ -79,12 +79,12 @@ gtube keeps only the youtube.com and google.com cookies from the file and renews
 | r | Start a radio from the selected or playing song |
 | l | Like or unlike the selected song |
 | Ctrl+V, or drop a link | Play a link: a track, an album or a playlist |
-| - and + | Volume |
+| - and +, or the volume slider | Volume (the slider is under the now-playing times; drag or scroll on it) |
 | s | Sign in |
 | F1 | Performance overlay |
 | f, Alt+Enter or F11 | Full screen |
 
-Long playlists load in full, not page by page. The window's size and position and the queue are kept between runs; a restored queue waits for Space or Enter, and a restored radio keeps loading more as it plays. With nothing queued, gtube opens on liked music.
+Long playlists load in full, not page by page. The window's size and position, the volume and the queue are kept between runs; a restored queue waits for Space or Enter, and a restored radio keeps loading more as it plays. With nothing queued, gtube opens on liked music.
 
 ## Visualizer
 
