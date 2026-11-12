@@ -36,6 +36,7 @@ typedef struct {
     char id[32], url[256], cookies[1200];
     SDL_IOStream *cache;  // the WebM as it comes, into the cache folder (player_cache), or NULL
     bool whole;           // the WebM came to its end
+    bool lost;            // its connection was lost and "connection lost" shows, until audio comes again
     long long received;  // bytes of WebM taken from the address
     char errors[2048];
     size_t nerrors;
@@ -57,6 +58,7 @@ struct player {
     char expected[PREFETCH_WANTS][32];  // the app's own guesses (player_expect)
     int nexpected;
     int failures;  // tracks in a row that failed to play
+    uint64_t retry_at;  // when to try the track again after too many failures (the network may be back), or 0
     char cache_dir[1024];  // player_cache's folder, or empty
     bool (*liked)(void *user, const char *id);
     void *liked_user;
@@ -294,6 +296,7 @@ static void on_frame(void *user, const uint8_t *data, size_t len, double seconds
 static bool feed(void *user, const uint8_t *data, size_t len) {
     playback *pb = user;
     pb->received += (long long)len;
+    if (pb->lost) pb->lost = false, set_status(pb->p, "%s", "");
     cache_write(pb, data, len);
     return gs_webm_feed(pb->webm, data, len) && !pb->bad && !SDL_GetAtomicInt(&pb->stop);
 }
@@ -304,12 +307,25 @@ static long long address_length(const char *url) {
     return c && (c[-1] == '?' || c[-1] == '&') ? SDL_strtoll(c + 5, NULL, 10) : 0;
 }
 
+// Says the connection is lost and waits `wait` seconds (or until the track is stopped), and doubles
+// the next wait, up to 30 s.
+static void wait_for_network(playback *pb, int *wait) {
+    char again[64];
+    SDL_snprintf(again, sizeof again, "connection lost; trying again in %d s", *wait);
+    set_status(pb->p, "%s", again), pb->lost = true;
+    SDL_Log("player: %s (at byte %lld)", again, pb->received);
+    for (int ms = 0; ms < *wait * 1000 && !SDL_GetAtomicInt(&pb->stop); ms += 100) SDL_Delay(100);
+    *wait = *wait * 2 > 30 ? 30 : *wait * 2;
+}
+
 // Plays the track from its address. A connection that breaks picks up where it left off, on a new
 // address if that one has expired (a track paused for hours). False if no audio came at all.
 static bool play_address(playback *pb, char *url, size_t size) {
     gs_http_request r = { .url = url, .agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36" };
     long long total = address_length(url);
-    for (int tries = 0; tries < 3 && !SDL_GetAtomicInt(&pb->stop) && !pb->bad;) {
+    // Once audio has come, a track whose connection is lost waits for it to come back, trying again
+    // after 2 s, then twice as long each time up to 30 s, for as long as it is the one wanted.
+    for (int wait = 2; !SDL_GetAtomicInt(&pb->stop) && !pb->bad;) {
         long long before = pb->received;
         int status = gs_http_stream(&r, pb->received, feed, pb, &pb->stop);
         if (SDL_GetAtomicInt(&pb->stop) || pb->bad) break;
@@ -318,12 +334,13 @@ static bool play_address(playback *pb, char *url, size_t size) {
             break;
         }
         if (!SDL_GetAtomicInt(&pb->got_audio)) return false;
-        if (pb->received > before) tries = 0; else tries++;
-        if (status < 200 || status >= 300) {  // expired, most likely: a new address for the same track
+        if (pb->received > before) wait = 2;
+        if (status >= 300) {  // expired, most likely: a new address for the same track
             SDL_Log("player: address answered %d at byte %lld; fetching a new one", status, pb->received);
-            if (!prefetch_fetch(pb->p->prefetch, pb->id, url, size, &pb->stop)) break;
-            r.url = url;
+            if (prefetch_fetch(pb->p->prefetch, pb->id, url, size, &pb->stop)) r.url = url;
         }
+        if (pb->received > before) continue;
+        wait_for_network(pb, &wait);
     }
     return SDL_GetAtomicInt(&pb->got_audio);
 }
@@ -353,6 +370,7 @@ static void play_pipe(playback *pb) {
             pb->whole = true;  // the end of the stream, or yt-dlp stopped (told apart by its exit code)
             break;
         }
+        pb->received += (long long)n;
         cache_write(pb, buf, n);
         if (!gs_webm_feed(pb->webm, buf, n) || pb->bad) bad = true;
     }
@@ -386,8 +404,18 @@ static int SDLCALL play_thread(void *user) {
             cache_close(pb, false), cache_open(pb);  // (from the start again)
         }
     }
-    free(url);
     if (!played && !SDL_GetAtomicInt(&pb->stop)) play_pipe(pb);
+    // yt-dlp that gave up partway (the network gone) is followed by the track's address, from the
+    // byte it stopped at, once one can be fetched again.
+    for (int wait = 2; !played && !pb->whole && !pb->bad && SDL_GetAtomicInt(&pb->got_audio) && !SDL_GetAtomicInt(&pb->stop);) {
+        if (prefetch_fetch(pf, pb->id, url, 8192, &pb->stop)) {
+            SDL_Log("player: going on from byte %lld at the track's address", pb->received);
+            play_address(pb, url, 8192);
+            break;
+        }
+        wait_for_network(pb, &wait);
+    }
+    free(url);
     gs_webm_free(pb->webm);
     pb->webm = NULL;
     if (pb->bad || !SDL_GetAtomicInt(&pb->got_audio)) SDL_SetAtomicInt(&pb->failed, 1);
@@ -419,6 +447,7 @@ void player_play(player *p, int index) { player_play_at(p, index, 0); }
 
 void player_play_at(player *p, int index, double seconds) {
     stop_playback(p);
+    p->retry_at = 0;
     SDL_LockMutex(p->lock);
     if (index < 0 || index >= p->n) { SDL_UnlockMutex(p->lock); return; }
     p->current = index;
@@ -511,11 +540,16 @@ void player_update(player *p) {
         player_play(p, 0);
         return;
     }
+    if (p->retry_at && SDL_GetTicks() >= p->retry_at) {  // (player_play_at clears retry_at; the failure count stays, for the next wait)
+        set_status(p, "%s", "trying again");
+        player_play(p, p->current);
+        return;
+    }
     if (p->now && !p->now->started && gs_stream_position(p->now->stream) > 0) {
         p->now->started = true;
         p->failures = 0;
         SDL_LockMutex(p->lock);
-        if (!strcmp(p->status, NEED_SIGNIN)) p->status[0] = 0;  // signing in worked
+        if (!strcmp(p->status, NEED_SIGNIN) || !strcmp(p->status, "trying again")) p->status[0] = 0;  // signing in, or the network, works again
         SDL_Log("player: playing \"%s\", at %.3f s", p->current >= 0 ? p->queue[p->current].title : "", player_position(p));
         SDL_UnlockMutex(p->lock);
     }
@@ -527,14 +561,16 @@ void player_update(player *p) {
             return;
         }
         bool failed = SDL_GetAtomicInt(&pb->failed);
-        if (failed && ++p->failures >= MAX_FAILURES) {  // something is wrong with every track, not one: stop and say what
+        if (failed && ++p->failures >= MAX_FAILURES) {  // something is wrong with every track, not one: wait, say what, and try this one again
+            int wait = 15 << (p->failures - MAX_FAILURES < 3 ? p->failures - MAX_FAILURES : 3);  // 15 s, then 30, 60 and 120
             char why[200];
             last_error(pb->errors, why, sizeof why);
             SDL_LockMutex(p->lock);
-            SDL_snprintf(p->status, sizeof p->status, "stopped: %d tracks in a row would not play%s%s", p->failures, why[0] ? ": " : "", why);
+            SDL_snprintf(p->status, sizeof p->status, "%d tracks in a row would not play%s%s; trying again in %d s", p->failures, why[0] ? ": " : "", why, wait);
             SDL_UnlockMutex(p->lock);
             SDL_Log("player: %s", p->status);
             stop_playback(p);
+            p->retry_at = SDL_GetTicks() + (uint64_t)wait * 1000;
             return;
         }
         if (failed) set_status(p, "could not play %s; skipping", p->queue[p->current].title);
