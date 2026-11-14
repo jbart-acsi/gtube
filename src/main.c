@@ -60,6 +60,7 @@ typedef struct {
     SDL_FRect tabs[4], header;
     search_kind search;      // what the search looks for: everything, or one kind (Tab)
     SDL_FRect filters[SEARCH_KINDS];  // the kinds' names in the search box, to click
+    SDL_FRect shuffle;       // "shuffle" on a list's header line, to click (empty when not shown)
     viz *viz;
     bool fullscreen;
     double pace_cap;
@@ -747,19 +748,39 @@ static void start_typing(app *a) {
     SDL_StartTextInput(a->win);
 }
 
-// Enter or a click on row i: play a song (its whole list becomes the queue), or open an album or playlist.
-static void activate(app *a, int i) {
-    if (a->view == V_QUEUE) { player_play(a->player, i); return; }
+// A list's songs in a random order, the one at `first` (unless -1) first; the queue starts there.
+static void shuffle_tracks(track *t, int n, int first) {
+    if (first > 0 && first < n) { track f = t[first]; t[first] = t[0], t[0] = f; }
+    for (int k = n - 1; k > (first >= 0 ? 1 : 0); k--) {
+        int j = (first >= 0 ? 1 : 0) + SDL_rand(k + 1 - (first >= 0 ? 1 : 0));
+        track x = t[k]; t[k] = t[j], t[j] = x;
+    }
+}
+
+// Enter or a click on row i: play a song (its whole list becomes the queue), or open an album or
+// playlist. Shuffled (Shift+Enter, or i -1 for "shuffle" on the header), the list goes in a random
+// order, the chosen song first.
+static void activate(app *a, int i, bool shuffled) {
+    if (a->view == V_QUEUE && !shuffled) { player_play(a->player, i); return; }
+    if (a->view == V_QUEUE) {  // the queue itself, reordered
+        int cur, n = player_queue(a->player, queue_copy, 2000, &cur);
+        if (!n) return;
+        shuffle_tracks(queue_copy, n, i >= 0 ? i : cur);  // (from the header, the playing song stays first, and plays on)
+        a->radio = false;
+        player_set_queue(a->player, queue_copy, n, 0);
+        a->selected[V_QUEUE] = 0;
+        return;
+    }
     if (view_shelf[a->view] < 0) return;
     library *l = &a->library;
     SDL_LockMutex(l->lock);
     shelf *s = &l->shelves[view_shelf[a->view]];
-    if (i < 0 || i >= s->n) { SDL_UnlockMutex(l->lock); return; }
-    item it = s->items[i];
+    if (i < -1 || i >= s->n || (i == -1 && !shuffled)) { SDL_UnlockMutex(l->lock); return; }
+    item it = i >= 0 ? s->items[i] : (item){ .kind = ITEM_SONG };
     track *tracks = NULL;
-    int n = 0, start = 0;
+    int n = 0, start = -1;
     if (it.kind == ITEM_SONG) {
-        tracks = SDL_malloc(sizeof *tracks * (size_t)s->n);
+        tracks = SDL_malloc(sizeof *tracks * (size_t)(s->n ? s->n : 1));
         for (int k = 0; k < s->n; k++)
             if (s->items[k].kind == ITEM_SONG) {
                 if (k == i) start = n;
@@ -767,9 +788,12 @@ static void activate(app *a, int i) {
             }
     }
     SDL_UnlockMutex(l->lock);
-    if (tracks) {
+    if (tracks && n) {
+        if (shuffled) shuffle_tracks(tracks, n, start), start = 0;
         a->radio = false;
-        player_set_queue(a->player, tracks, n, start);
+        player_set_queue(a->player, tracks, n, start < 0 ? 0 : start);
+    }
+    if (tracks) {
         SDL_free(tracks);
     } else if (it.kind == ITEM_ALBUM || it.kind == ITEM_PLAYLIST || it.kind == ITEM_ARTIST) {
         if (a->view != V_OPEN) {  // opened from a tab or the search: a new trail
@@ -1062,7 +1086,7 @@ SDL_AppResult SDL_AppEvent(void *state, SDL_Event *e) {
         case SDLK_PAGEDOWN: *sel += page; break;
         case SDLK_HOME: *sel = 0; break;
         case SDLK_END: *sel = 1 << 30; break;
-        case SDLK_RETURN: case SDLK_KP_ENTER: activate(a, *sel); break;
+        case SDLK_RETURN: case SDLK_KP_ENTER: activate(a, *sel, e->key.mod & SDL_KMOD_SHIFT); break;
         case SDLK_R: if (!ctrl) start_radio(a); break;
         case SDLK_L: if (!ctrl) rate(a, RATE_LIKE, false); break;
         case SDLK_D: if (!ctrl) rate(a, RATE_DISLIKE, false); break;
@@ -1099,13 +1123,14 @@ SDL_AppResult SDL_AppEvent(void *state, SDL_Event *e) {
                 show(a, i);
                 return SDL_APP_CONTINUE;
             }
+        if (a->shuffle.w > 0 && inside(a->shuffle, x, y)) { activate(a, -1, true); return SDL_APP_CONTINUE; }
         if (a->view == V_SEARCH)
             for (int i = 0; i < SEARCH_KINDS; i++)
                 if (inside(a->filters[i], x, y)) { set_search(a, i); return SDL_APP_CONTINUE; }
         if (a->view == V_SEARCH && inside(a->header, x, y)) start_typing(a);
         else if (a->view == V_OPEN && inside(a->header, x, y)) go_back(a);
         for (int i = 0; i < a->nrows; i++)
-            if (inside(a->rows[i], x, y)) *sel = a->row_index[i], activate(a, a->row_index[i]);
+            if (inside(a->rows[i], x, y)) *sel = a->row_index[i], activate(a, a->row_index[i], false);
     } else if (e->type == SDL_EVENT_MOUSE_BUTTON_UP && e->button.button == SDL_BUTTON_LEFT) {
         a->volume_drag = false;
         if (a->seek_drag) {  // (the song starts again from there: player_play_at)
@@ -1344,6 +1369,11 @@ SDL_AppResult SDL_AppIterate(void *state) {
     float hy = 190 * u;
     a->header = (SDL_FRect){ x - 8 * u, hy - 20 * u, w + 16 * u, 28 * u };
     const char *more = s && s->loading ? ", loading\xE2\x80\xA6" : "";
+    // "shuffle" on the right of a list of songs, which plays it in a random order.
+    bool shuffles = !signed_out && (a->view == V_QUEUE ? qn > 1 : a->view == V_LIKED || a->view == V_OPEN);
+    float sw = shuffles ? gs_fontset_width(a->fonts, 14 * u, "shuffle") : 0;
+    a->shuffle = shuffles ? (SDL_FRect){ x + w - sw - 6 * u, hy - 18 * u, sw + 12 * u, 26 * u } : (SDL_FRect){ 0 };
+    if (shuffles) gs_fontset_draw(a->glyphs, a->fonts, 14 * u, x + w - sw, hy, "shuffle", accent), w -= sw + 16 * u;
     if (a->view == V_SEARCH) {
         SDL_SetRenderDrawColor(a->ren, a->typing ? 52 : 36, a->typing ? 48 : 34, a->typing ? 45 : 32, 255);
         SDL_RenderFillRect(a->ren, &a->header);
@@ -1373,6 +1403,8 @@ SDL_AppResult SDL_AppIterate(void *state) {
         else snprintf(buf, sizeof buf, "%d playlist%s%s", s->n, s->n == 1 ? "" : "s", more);
         fit(a, 14 * u, x, hy, w, s->error[0] ? s->error : buf, s->error[0] ? accent : dim);
     }
+
+    if (shuffles) w += sw + 16 * u;
 
     // The list, scrolled to keep the selection in view (unless the wheel just moved it).
     int n = signed_out ? 0 : s ? s->n : qn, *sel = &a->selected[a->view], *scroll = &a->scroll[a->view];
