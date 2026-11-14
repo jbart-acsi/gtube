@@ -34,9 +34,12 @@ typedef enum { SEARCH_ALL, SEARCH_SONGS, SEARCH_ALBUMS, SEARCH_ARTISTS, SEARCH_P
 // each under a heading: top songs, albums, singles, playlists it is on and artists like it.
 bool api_search(account *a, const char *query, search_kind kind, const char *more, page *out);
 bool api_browse(account *a, const char *browse_id, const char *more, page *out);
-bool api_radio(account *a, const char *video_id, const char *more, page *out);
+bool api_radio(account *a, const char *seed, const char *more, page *out);  // from a song's video id, or a playlist's id
 typedef enum { RATE_NONE, RATE_LIKE, RATE_DISLIKE } rating;
 bool api_rate(account *a, const char *video_id, rating r, char *error, size_t size);
+// Deletes the playlist old_id (when given) and makes a private one named `title` of the videos in
+// `ids`, whose id goes in `id`. Signed in only.
+bool api_playlist_replace(account *a, const char *old_id, const char *title, const char *const *ids, int n, char *id, size_t size, char *error, size_t esize);
 void page_free(page *p);
 
 #define LIKED_MUSIC "VLLM"                     // browse id of the Liked music playlist

@@ -33,6 +33,7 @@ typedef struct {
     char (*disliked)[16];  // ids of songs disliked in this run (YouTube does not list them)
     int ndisliked;
     char note[160];     // the last rating that failed
+    char queue_playlist[64];  // the playlist "gtube queue", remade for each radio from the queue (main keeps its id)
 } library;
 
 void library_init(library *l, account *a, gs_jobs *jobs);
@@ -46,6 +47,9 @@ void library_copy(library *l, int which, shelf *out);
 void library_put(library *l, int which, shelf *copy);
 void library_search(library *l, const char *query, search_kind kind);
 void library_radio(library *l, const char *video_id, const char *title);
+// A radio from songs: they replace the playlist "gtube queue" in the library (made the first time),
+// and its radio fills SHELF_RADIO, whose source then is that playlist. Signed in only.
+void library_queue_radio(library *l, const char *const *ids, int n);
 void library_radio_more(library *l);  // the radio's next page, if it has one and is not loading
 // A radio saved from an earlier run: nothing loaded yet, continued from `more`. Returns its generation.
 int library_radio_resume(library *l, const char *video_id, const char *title, const char *more);

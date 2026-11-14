@@ -292,6 +292,29 @@ static void start_cache(app *a) {
     player_cache(a->player, folder, liked_now, &a->library);
 }
 
+// The playlist "gtube queue" (start_queue_radio), in queue-playlist.txt in the data folder, so that
+// each radio from the queue replaces the one before.
+static char saved_playlist[64];
+
+static void load_queue_playlist(app *a) {
+    char path[1200];
+    snprintf(path, sizeof path, "%squeue-playlist.txt", a->dir);
+    char *text = SDL_LoadFile(path, NULL);
+    if (text) SDL_strlcpy(saved_playlist, text, sizeof saved_playlist), saved_playlist[strcspn(saved_playlist, "\r\n")] = 0;
+    SDL_free(text);
+    SDL_strlcpy(a->library.queue_playlist, saved_playlist, sizeof a->library.queue_playlist);
+}
+
+static void save_queue_playlist(app *a) {
+    char id[64], path[1200];
+    SDL_LockMutex(a->library.lock);
+    SDL_strlcpy(id, a->library.queue_playlist, sizeof id);
+    SDL_UnlockMutex(a->library.lock);
+    if (!strcmp(id, saved_playlist)) return;
+    snprintf(path, sizeof path, "%squeue-playlist.txt", a->dir);
+    if (SDL_SaveFile(path, id, strlen(id))) SDL_strlcpy(saved_playlist, id, sizeof saved_playlist);
+}
+
 // The volume between runs, in volume.txt in the data folder.
 static void volume_path(const app *a, char *out, size_t size) { snprintf(out, size, "%svolume.txt", a->dir); }
 
@@ -593,7 +616,7 @@ SDL_AppResult SDL_AppInit(void **state, int argc, char **argv) {
     a->audio = !a->shot && gs_mix_open(RATE);
     a->started = SDL_GetTicks();
     a->volume = a->saved_volume = 1;
-    if (a->persist) load_volume(a);
+    if (a->persist) load_volume(a), load_queue_playlist(a);
     a->player = player_new(&a->tools, &a->account, a->jobs, a->audio);
     if (a->audio && !a->demo) start_media(a);
     if (a->persist) start_cache(a), a->hotkeys = hotkeys_init();
@@ -820,9 +843,34 @@ static void go_back(app *a) {
     a->selected[V_OPEN] = a->trail[a->ntrail].sel, a->scroll[V_OPEN] = a->trail[a->ntrail].scroll;
 }
 
+// Shift+R: a radio from the whole queue, by way of the playlist "gtube queue" (YouTube Music makes a
+// radio from one song or from a playlist), which each one replaces. Up to 200 songs go in it.
+static void start_queue_radio(app *a) {
+    if (!account_signed_in(&a->account)) { note(a, "Press s to sign in for a radio from the queue"); return; }
+    int cur, n = player_queue(a->player, queue_copy, 2000, &cur);
+    if (n > 200) n = 200;
+    if (!n) { note(a, "The queue is empty"); return; }
+    const char *ids[200];
+    for (int i = 0; i < n; i++) ids[i] = queue_copy[i].id;
+    library_queue_radio(&a->library, ids, n);
+    SDL_LockMutex(a->library.lock);
+    a->radio_gen = a->library.shelves[SHELF_RADIO].gen;
+    SDL_UnlockMutex(a->library.lock);
+    a->radio = true, a->radio_taken = 0, a->radio_replace = true;
+    note(a, "Radio from the queue (kept as the playlist gtube queue)");
+    show(a, V_QUEUE);
+}
+
 static void start_radio(app *a) {
-    item song;
-    if (!chosen_song(a, &song)) { note(a, "Pick a song to start a radio from"); return; }
+    item song = { 0 };
+    if (view_shelf[a->view] >= 0) {  // a selected playlist gives its radio
+        SDL_LockMutex(a->library.lock);
+        shelf *s = &a->library.shelves[view_shelf[a->view]];
+        int sel = a->selected[a->view];
+        if (sel < s->n && s->items[sel].kind == ITEM_PLAYLIST) song = s->items[sel];
+        SDL_UnlockMutex(a->library.lock);
+    }
+    if (!song.id[0] && !chosen_song(a, &song)) { note(a, "Pick a song to start a radio from"); return; }
     library_radio(&a->library, song.id, song.title);
     SDL_LockMutex(a->library.lock);
     a->radio_gen = a->library.shelves[SHELF_RADIO].gen;
@@ -1087,7 +1135,7 @@ SDL_AppResult SDL_AppEvent(void *state, SDL_Event *e) {
         case SDLK_HOME: *sel = 0; break;
         case SDLK_END: *sel = 1 << 30; break;
         case SDLK_RETURN: case SDLK_KP_ENTER: activate(a, *sel, e->key.mod & SDL_KMOD_SHIFT); break;
-        case SDLK_R: if (!ctrl) start_radio(a); break;
+        case SDLK_R: if (!ctrl) (e->key.mod & SDL_KMOD_SHIFT) ? start_queue_radio(a) : start_radio(a); break;
         case SDLK_L: if (!ctrl) rate(a, RATE_LIKE, false); break;
         case SDLK_D: if (!ctrl) rate(a, RATE_DISLIKE, false); break;
         case SDLK_MINUS: case SDLK_KP_MINUS: set_volume(a, a->volume - 0.1f); break;
@@ -1270,6 +1318,7 @@ SDL_AppResult SDL_AppIterate(void *state) {
         int v = player_version(a->player);
         if (v != a->saved_version) save_queue(a), a->saved_version = v;
         if (a->volume != a->saved_volume) save_volume(a);
+        save_queue_playlist(a);
     }
     library *l = &a->library;
     SDL_LockMutex(l->lock);
@@ -1513,6 +1562,7 @@ void SDL_AppQuit(void *state, SDL_AppResult result) {
     if (a->persist && a->win) save_window(a);
     if (a->persist && a->player) save_queue(a);
     if (a->persist && a->volume != a->saved_volume) save_volume(a);
+    if (a->persist) save_queue_playlist(a);
     gs_nowplaying_quit();
     hotkeys_quit();
     if (a->restart) start_new_build(a);

@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef enum { LOAD_BROWSE, LOAD_SEARCH, LOAD_RADIO, LOAD_RATE } load_kind;
+typedef enum { LOAD_BROWSE, LOAD_SEARCH, LOAD_RADIO, LOAD_RATE, LOAD_QUEUE_RADIO } load_kind;
 
 typedef struct {
     library *l;
@@ -12,6 +12,8 @@ typedef struct {
     char arg[256];
     char more[2048];
     search_kind search;
+    char (*ids)[32];  // the songs to make a playlist of, for a radio from them
+    int nids;
     item song;  // for rating
     rating rate, was;
 } load;
@@ -113,6 +115,27 @@ static void run(void *user) {
         deliver(j, &pg, api_radio(l->account, j->arg, j->more[0] ? j->more : NULL, &pg));
         page_free(&pg);
         break;
+    case LOAD_QUEUE_RADIO: {  // the songs become the one playlist kept for this, whose radio it is
+        const char **ids = malloc(sizeof *ids * (size_t)(j->nids ? j->nids : 1));
+        for (int i = 0; i < j->nids; i++) ids[i] = j->ids[i];
+        char old[64], made[64];
+        SDL_LockMutex(l->lock);
+        SDL_strlcpy(old, l->queue_playlist, sizeof old);
+        SDL_UnlockMutex(l->lock);
+        memset(&pg, 0, sizeof pg);
+        bool ok = api_playlist_replace(l->account, old, "gtube queue", ids, j->nids, made, sizeof made, pg.error, sizeof pg.error);
+        free(ids), free(j->ids);
+        if (ok) {
+            SDL_LockMutex(l->lock);
+            SDL_strlcpy(l->queue_playlist, made, sizeof l->queue_playlist);
+            if (l->shelves[j->shelf].gen == j->gen) SDL_strlcpy(l->shelves[j->shelf].source, made, sizeof l->shelves[j->shelf].source);  // (the radio's seed, kept with the queue)
+            SDL_UnlockMutex(l->lock);
+            ok = api_radio(l->account, made, NULL, &pg);
+        }
+        deliver(j, &pg, ok);
+        page_free(&pg);
+        break;
+    }
     case LOAD_RATE: {
         static const char *const verbs[] = { "clear the rating of", "like", "dislike" };
         char error[160];
@@ -199,6 +222,13 @@ void library_search(library *l, const char *query, search_kind kind) {
     gs_jobs_add(l->jobs, run, j);
 }
 void library_radio(library *l, const char *id, const char *title) { start(l, SHELF_RADIO, LOAD_RADIO, id, title); }
+
+void library_queue_radio(library *l, const char *const *ids, int n) {
+    load *j = prepare(l, SHELF_RADIO, LOAD_QUEUE_RADIO, "", "the queue");
+    j->ids = malloc(sizeof *j->ids * (size_t)(n ? n : 1)), j->nids = n;
+    for (int i = 0; i < n; i++) SDL_strlcpy(j->ids[i], ids[i], sizeof j->ids[i]);
+    gs_jobs_add(l->jobs, run, j);
+}
 
 int library_radio_resume(library *l, const char *id, const char *title, const char *more) {
     SDL_LockMutex(l->lock);

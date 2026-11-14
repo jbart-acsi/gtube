@@ -71,12 +71,14 @@ static void json_quote(char *out, size_t size, const char *s) {
 
 // POSTs {"context": ..., <fields>} to an API endpoint; returns the parsed response or NULL.
 static gs_json *request(account *a, const char *endpoint, const char *fields, char *error, size_t esize) {
-    char url[256], body[4096], version[32], jar[1200], auth[200] = "", sapisid[256];
+    char url[256], version[32], jar[1200], auth[200] = "", sapisid[256];
     time_t now = time(NULL);
     struct tm *utc = gmtime(&now);
     strftime(version, sizeof version, "1.%Y%m%d.01.00", utc);  // the page's own version string, as ytmusicapi sends
     snprintf(url, sizeof url, ORIGIN "/youtubei/v1/%s?prettyPrint=false", endpoint);
-    snprintf(body, sizeof body, "{\"context\":{\"client\":{\"clientName\":\"WEB_REMIX\",\"clientVersion\":\"%s\",\"hl\":\"en\"}},%s}", version, fields);
+    size_t bsize = strlen(fields) + 200;
+    char *body = malloc(bsize);
+    snprintf(body, bsize, "{\"context\":{\"client\":{\"clientName\":\"WEB_REMIX\",\"clientVersion\":\"%s\",\"hl\":\"en\"}},%s}", version, fields);
     // Signed in: the cookies, and a hash of the SAPISID cookie that shows the page's origin.
     bool signed_in = account_cookie(a, "SAPISID", sapisid, sizeof sapisid) && account_jar_file(a, jar, sizeof jar);
     if (signed_in) {
@@ -92,6 +94,7 @@ static gs_json *request(account *a, const char *endpoint, const char *fields, ch
     char *out = NULL;
     size_t len = 0;
     int status = gs_http_fetch(&r, &out, &len);
+    free(body);
     if (signed_in) account_jar_done(jar);
 
     gs_json *doc = status == 200 ? gs_json_parse(out, len) : NULL;
@@ -308,13 +311,13 @@ bool api_browse(account *a, const char *browse_id, const char *more, page *out) 
     return doc && read_page(doc, out, !more && !strncmp(browse_id, "UC", 2) ? PAGE_ARTIST : PAGE_LIST);
 }
 
-bool api_radio(account *a, const char *video_id, const char *more, page *out) {
+bool api_radio(account *a, const char *seed, const char *more, page *out) {
     memset(out, 0, sizeof *out);
+    bool playlist = strlen(seed) > 11;  // (a video id has 11 characters; a playlist's id more)
     char fields[2500] = "\"isAudioOnly\":true,\"playlistId\":", list[80];
-    snprintf(list, sizeof list, "RDAMVM%s", video_id);
+    snprintf(list, sizeof list, playlist ? "RDAMPL%s" : "RDAMVM%s", playlist && !strncmp(seed, "VL", 2) ? seed + 2 : seed);
     json_quote(fields, sizeof fields, list);
-    SDL_strlcat(fields, more ? ",\"continuation\":" : ",\"videoId\":", sizeof fields);
-    json_quote(fields, sizeof fields, more ? more : video_id);
+    if (more || !playlist) SDL_strlcat(fields, more ? ",\"continuation\":" : ",\"videoId\":", sizeof fields), json_quote(fields, sizeof fields, more ? more : seed);
     gs_json *doc = request(a, "next", fields, out->error, sizeof out->error);
     if (!doc || !read_page(doc, out, PAGE_LIST)) return false;
     if (!out->n && !out->error[0]) SDL_strlcpy(out->error, "no radio for that song", sizeof out->error);
@@ -328,6 +331,33 @@ bool api_rate(account *a, const char *video_id, rating r, char *error, size_t si
     gs_json *doc = request(a, r == RATE_LIKE ? "like/like" : r == RATE_DISLIKE ? "like/dislike" : "like/removelike", fields, error, size);
     gs_json_free(doc);
     return doc != NULL;
+}
+
+bool api_playlist_replace(account *a, const char *old_id, const char *title, const char *const *ids, int n, char *id, size_t size, char *error, size_t esize) {
+    char fields[200];
+    if (old_id && old_id[0]) {  // (gone already, or deleted on the site: no matter)
+        SDL_strlcpy(fields, "\"playlistId\":", sizeof fields);
+        json_quote(fields, sizeof fields, !strncmp(old_id, "VL", 2) ? old_id + 2 : old_id);
+        char ignored[160];
+        gs_json_free(request(a, "playlist/delete", fields, ignored, sizeof ignored));
+    }
+    size_t cap = 300 + strlen(title) * 2 + (size_t)n * 20;
+    char *body = malloc(cap);
+    SDL_strlcpy(body, "\"title\":", cap);
+    json_quote(body, cap, title);
+    SDL_strlcat(body, ",\"description\":\"\",\"privacyStatus\":\"PRIVATE\",\"videoIds\":[", cap);
+    for (int i = 0; i < n; i++) {
+        if (i) SDL_strlcat(body, ",", cap);
+        json_quote(body, cap, ids[i]);
+    }
+    SDL_strlcat(body, "]", cap);
+    gs_json *doc = request(a, "playlist/create", body, error, esize);
+    free(body);
+    const char *made = doc ? gs_json_str(gs_json_get(gs_json_root(doc), "playlistId"), "") : "";
+    SDL_strlcpy(id, made, size);
+    if (doc && !made[0]) SDL_strlcpy(error, "YouTube Music made no playlist", esize);
+    gs_json_free(doc);
+    return id[0] != 0;
 }
 
 void page_free(page *p) {

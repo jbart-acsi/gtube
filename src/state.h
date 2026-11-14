@@ -9,7 +9,7 @@
 
 typedef struct {
     bool on;          // the queue is a radio
-    char seed[64];    // the song it started from
+    char seed[64];    // the song it started from, or the playlist (a radio from the queue)
     char title[256];
     char more[2048];  // YouTube's token for its next page
 } radio_state;

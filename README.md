@@ -79,7 +79,8 @@ gtube keeps only the youtube.com and google.com cookies from the file and renews
 | Space | Pause or resume |
 | n and p | Next and previous track |
 | The media keys | Play, pause, next and previous, also while gtube is in the background; the system's media overlay shows the song |
-| r | Start a radio from the selected or playing song |
+| r | Start a radio from the selected playlist, or the selected or playing song |
+| Shift+R | Start a radio from the whole queue (up to 200 songs), kept as the private playlist "gtube queue", which each one replaces |
 | l | Like or unlike the selected song |
 | d | Dislike the selected song, skipping it if it is playing, or take the dislike back |
 | Ctrl+Alt+L, Ctrl+Alt+D | Like or dislike the playing song from any program (Windows) |
