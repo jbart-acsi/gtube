@@ -912,30 +912,10 @@ static bool names_first_artist(const char *artists, const char *other) {
     return first[0] && SDL_strcasestr(artists, first);
 }
 
-// A song's title without what other uploads and versions of it add: the artist before it ("Artist -
-// Song"), and whatever follows a dash, a bar or a bracket ("Song (Remix)", "Song - Live", "Song |
-// Official Music Video").
-static void base_title(const track *t, char *out, size_t size) {
-    SDL_strlcpy(out, t->title, size);
-    char *dash = strstr(out, " - ");
-    if (dash) {
-        *dash = 0;
-        if (names_first_artist(t->artist, out)) SDL_memmove(out, dash + 3, strlen(dash + 3) + 1);
-        else *dash = ' ';
-    }
-    static const char *const ends[] = { " - ", " – ", " — ", " | ", " (", " [" };
-    for (size_t i = 0; i < SDL_arraysize(ends); i++) {
-        char *at = strstr(out, ends[i]);
-        if (at) *at = 0;
-    }
-}
-
-// The same song under another video or as another version of it: YouTube's radio offers a song's
-// audio track and its music video, other uploads of it, and its remixes and live takes.
+// The same song under another video: YouTube's radio offers a song's audio track and its music
+// video, or its single and album releases, as separate entries.
 static bool same_song(const track *x, const track *y) {
-    char a[256], b[256];
-    base_title(x, a, sizeof a), base_title(y, b, sizeof b);
-    return !SDL_strcasecmp(a, b) && (names_first_artist(x->artist, y->artist) || names_first_artist(y->artist, x->artist));
+    return !SDL_strcasecmp(x->title, y->title) && (names_first_artist(x->artist, y->artist) || names_first_artist(y->artist, x->artist));
 }
 
 // Songs likely to be played next besides the queue's own, for the player to prefetch: the selected
